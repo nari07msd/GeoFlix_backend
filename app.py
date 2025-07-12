@@ -3,6 +3,8 @@ from flask_cors import CORS
 import random
 import joblib
 import os
+import pandas as pd
+from datetime import datetime
 
 app = Flask(__name__)
 CORS(app)
@@ -17,10 +19,10 @@ TREND_DB = {
 
 # ==== Load ML model ====
 MODEL_PATH = "ml_model.pkl"
-if os.path.exists(MODEL_PATH):
-    model = joblib.load(MODEL_PATH)
-else:
-    model = None
+model = joblib.load(MODEL_PATH) if os.path.exists(MODEL_PATH) else None
+
+# ==== Constants ====
+LOG_FILE = "ml_logs.csv"
 
 # ==== Routes ====
 
@@ -33,22 +35,58 @@ def get_trend():
         "trend": random.choice(trends)
     })
 
+
 @app.route("/ml-recommend", methods=["POST"])
 def ml_recommend():
     if not model:
-        return jsonify({"error": "Model not loaded"}), 500
+        return jsonify({"error": "ML model not loaded"}), 500
 
-    data = request.get_json()
-    condition = data.get("condition", "Clear")
-    temperature = data.get("temp", 25)
+    try:
+        data = request.get_json()
+        condition = data.get("condition", "Clear")
+        temperature = data.get("temperature", 25)
 
-    # Encode weather condition
-    condition_map = {"Clear": 0, "Rain": 1, "Clouds": 2, "Snow": 3}
-    condition_code = condition_map.get(condition, 0)
+        # Encode weather condition
+        condition_map = {"Clear": 0, "Rain": 1, "Clouds": 2, "Snow": 3}
+        condition_code = condition_map.get(condition, 0)
 
-    # Predict category
-    prediction = model.predict([[condition_code, temperature]])
-    return jsonify({"category": prediction[0]})
+        # Predict category
+        prediction = model.predict([[condition_code, temperature]])[0]
+
+        # Log the request to CSV
+        log_entry = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "condition": condition,
+            "temperature": temperature,
+            "predicted_category": prediction
+        }
+
+        df = pd.DataFrame([log_entry])
+        if os.path.exists(LOG_FILE):
+            df.to_csv(LOG_FILE, mode='a', header=False, index=False)
+        else:
+            df.to_csv(LOG_FILE, index=False)
+
+        return jsonify({"category": prediction})
+    
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/dashboard")
+def dashboard():
+    if not os.path.exists(LOG_FILE):
+        return jsonify({"message": "No analytics data yet."})
+
+    df = pd.read_csv(LOG_FILE)
+    summary = {
+        "total_predictions": len(df),
+        "most_common_category": df["predicted_category"].mode()[0] if not df.empty else None,
+        "average_temperature": round(df["temperature"].mean(), 2),
+        "condition_distribution": df["condition"].value_counts().to_dict()
+    }
+    return jsonify(summary)
+
 
 if __name__ == "__main__":
-    app.run()
+    app.run(debug=True)

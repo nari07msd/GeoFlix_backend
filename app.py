@@ -88,5 +88,6 @@ def dashboard():
     return jsonify(summary)
 
 
+# ===== FINAL FIX: bind to 0.0.0.0 for deployment =====
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=True)

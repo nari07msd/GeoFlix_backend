@@ -98,6 +98,9 @@ def dashboard():
         return jsonify({"error": f"Failed to read logs: {str(e)}"}), 500
 
 # ==== Run Server for Deployment ====
+import os
+
 port = int(os.environ.get("PORT", 5000))
-app.run(host="0.0.0.0", port=port, debug=True)
+app.run(host='0.0.0.0', port=port)
+
 

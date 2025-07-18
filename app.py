@@ -1,81 +1,81 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import joblib
-import os
 import pandas as pd
+import random
+from collections import Counter
 
 app = Flask(__name__)
-CORS(app)
+CORS(app)  # Enable cross-origin requests
 
-MODEL_PATH = "ml_model.pkl"
-LOG_FILE = "prediction_logs.csv"
+# In-memory storage for analytics (temporary)
+requests_log = []
 
-# Load ML model
-try:
-    model = joblib.load(MODEL_PATH)
-    print("[INFO] ML model loaded successfully.")
-except Exception as e:
-    print("[ERROR] Failed to load ML model:", e)
-    model = None
-
-# Log predictions
-def log_prediction(condition, temperature, category):
-    log_exists = os.path.exists(LOG_FILE)
-    df = pd.DataFrame([{
-        "condition": condition,
-        "temperature": temperature,
-        "predicted_category": category
-    }])
-    if log_exists:
-        df.to_csv(LOG_FILE, mode='a', header=False, index=False)
+# === ML MODEL: simple weather → category rule-based logic ===
+def predict_category(weather_desc, temperature):
+    desc = weather_desc.lower()
+    if "sun" in desc or temperature > 30:
+        return "travel"
+    elif "rain" in desc:
+        return "music"
+    elif "cloud" in desc:
+        return "food"
+    elif "snow" in desc:
+        return "news"
     else:
-        df.to_csv(LOG_FILE, index=False)
+        return "default"
 
-# ML prediction route
-@app.route("/ml-recommend", methods=["POST"])
+# === ML Endpoint ===
+@app.route('/ml-recommend', methods=['POST'])
 def ml_recommend():
-    data = request.json
-    condition = data.get("condition")
-    temperature = data.get("temperature")
+    data = request.get_json()
 
-    if not model:
-        return jsonify({"error": "ML model not loaded"}), 500
+    weather_desc = data.get("description", "")
+    temperature = data.get("temperature", 0.0)
 
-    try:
-        prediction = model.predict([[condition, temperature]])
-        category = prediction[0]
-        log_prediction(condition, temperature, category)
-        return jsonify({"category": category})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    category = predict_category(weather_desc, temperature)
 
-# Dashboard data route
-@app.route("/dashboard")
-def dashboard():
-    if not os.path.exists(LOG_FILE):
+    # Store request info for dashboard (optional)
+    entry = {
+        "weather": weather_desc,
+        "temperature": temperature,
+        "category": category,
+        "city": data.get("city", "Unknown")
+    }
+    requests_log.append(entry)
+
+    return jsonify({"category": category})
+
+# === Dashboard Endpoint ===
+@app.route('/dashboard', methods=['GET'])
+def dashboard_data():
+    if not requests_log:
         return jsonify({
             "total_requests": 0,
-            "top_city": "N/A",
             "common_weather": "N/A",
-            "ml_category": "N/A"
+            "ml_category": "N/A",
+            "top_city": "N/A"
         })
 
-    try:
-        df = pd.read_csv(LOG_FILE)
+    total_requests = len(requests_log)
+    weather_list = [r["weather"] for r in requests_log]
+    category_list = [r["category"] for r in requests_log]
+    city_list = [r.get("city", "Unknown") for r in requests_log]
 
-        total_requests = len(df)
-        common_weather = df["condition"].mode()[0] if not df.empty else "N/A"
-        ml_category = df["predicted_category"].mode()[0] if not df.empty else "N/A"
-        top_city = "Not tracked"  # placeholder
+    most_common_weather = Counter(weather_list).most_common(1)[0][0]
+    most_common_category = Counter(category_list).most_common(1)[0][0]
+    top_city = Counter(city_list).most_common(1)[0][0]
 
-        return jsonify({
-            "total_requests": total_requests,
-            "top_city": top_city,
-            "common_weather": common_weather,
-            "ml_category": ml_category
-        })
-    except Exception as e:
-        return jsonify({"error": f"Failed to read logs: {str(e)}"}), 500
+    return jsonify({
+        "total_requests": total_requests,
+        "common_weather": most_common_weather,
+        "ml_category": most_common_category,
+        "top_city": top_city
+    })
 
-if __name__ == "__main__":
-    app.run(debug=True, port=8080)
+# === Root route to test server is alive ===
+@app.route('/')
+def index():
+    return "GeoFlix ML Backend is running!"
+
+if __name__ == '__main__':
+    app.run(port=8080, debug=True)

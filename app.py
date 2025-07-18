@@ -1,105 +1,81 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import random
 import joblib
 import os
 import pandas as pd
-from datetime import datetime
 
-# Initialize Flask app
 app = Flask(__name__)
-CORS(app)  # Enable Cross-Origin Resource Sharing
+CORS(app)
 
-# ==== Predefined Mock Trends ====
-TREND_DB = {
-    "New York": ["Broadway shows", "Street food", "Skyline views"],
-    "London": ["Royal sights", "Underground art", "West End"],
-    "Tokyo": ["Cherry blossoms", "Anime cafes", "Robot shows"],
-    "Bangalore": ["Startup culture", "Tech events", "Cafe hopping"]
-}
-
-# ==== Load ML Model ====
 MODEL_PATH = "ml_model.pkl"
-LOG_FILE = "ml_logs.csv"
+LOG_FILE = "prediction_logs.csv"
 
+# Load ML model
 try:
     model = joblib.load(MODEL_PATH)
     print("[INFO] ML model loaded successfully.")
 except Exception as e:
+    print("[ERROR] Failed to load ML model:", e)
     model = None
-    print(f"[ERROR] Failed to load ML model: {e}")
 
-# ==== Routes ====
+# Log predictions
+def log_prediction(condition, temperature, category):
+    log_exists = os.path.exists(LOG_FILE)
+    df = pd.DataFrame([{
+        "condition": condition,
+        "temperature": temperature,
+        "predicted_category": category
+    }])
+    if log_exists:
+        df.to_csv(LOG_FILE, mode='a', header=False, index=False)
+    else:
+        df.to_csv(LOG_FILE, index=False)
 
-@app.route("/")
-def home():
-    return jsonify({"message": "GeoFlix Backend is running."})
-
-@app.route("/trends")
-def get_trend():
-    city = request.args.get("city", "Unknown")
-    trends = TREND_DB.get(city, ["Local culture", "City highlights", "Top restaurants"])
-    return jsonify({
-        "city": city,
-        "trend": random.choice(trends)
-    })
-
+# ML prediction route
 @app.route("/ml-recommend", methods=["POST"])
 def ml_recommend():
+    data = request.json
+    condition = data.get("condition")
+    temperature = data.get("temperature")
+
     if not model:
         return jsonify({"error": "ML model not loaded"}), 500
 
     try:
-        data = request.get_json()
-        condition = data.get("condition", "Clear")
-        temperature = float(data.get("temperature", 25))
-
-        # Encode weather condition
-        condition_map = {"Clear": 0, "Rain": 1, "Clouds": 2, "Snow": 3}
-        condition_code = condition_map.get(condition, 0)
-
-        # Predict using model
-        prediction = model.predict([[condition_code, temperature]])[0]
-
-        # Log to CSV
-        log_entry = {
-            "timestamp": datetime.utcnow().isoformat(),
-            "condition": condition,
-            "temperature": temperature,
-            "predicted_category": prediction
-        }
-
-        df = pd.DataFrame([log_entry])
-        if os.path.exists(LOG_FILE):
-            df.to_csv(LOG_FILE, mode="a", header=False, index=False)
-        else:
-            df.to_csv(LOG_FILE, index=False)
-
-        return jsonify({"category": prediction})
-
+        prediction = model.predict([[condition, temperature]])
+        category = prediction[0]
+        log_prediction(condition, temperature, category)
+        return jsonify({"category": category})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+# Dashboard data route
 @app.route("/dashboard")
 def dashboard():
     if not os.path.exists(LOG_FILE):
-        return jsonify({"message": "No analytics data yet."})
+        return jsonify({
+            "total_requests": 0,
+            "top_city": "N/A",
+            "common_weather": "N/A",
+            "ml_category": "N/A"
+        })
 
     try:
         df = pd.read_csv(LOG_FILE)
-        summary = {
-            "total_predictions": len(df),
-            "most_common_category": df["predicted_category"].mode()[0] if not df.empty else None,
-            "average_temperature": round(df["temperature"].mean(), 2),
-            "condition_distribution": df["condition"].value_counts().to_dict()
-        }
-        return jsonify(summary)
+
+        total_requests = len(df)
+        common_weather = df["condition"].mode()[0] if not df.empty else "N/A"
+        ml_category = df["predicted_category"].mode()[0] if not df.empty else "N/A"
+        top_city = "Not tracked"  # placeholder
+
+        return jsonify({
+            "total_requests": total_requests,
+            "top_city": top_city,
+            "common_weather": common_weather,
+            "ml_category": ml_category
+        })
     except Exception as e:
         return jsonify({"error": f"Failed to read logs: {str(e)}"}), 500
 
-# ==== Run Server for Deployment ====
-port = int(os.environ.get("PORT", 8080))  # 🔁 use 8080 instead of 5000
-app.run(host="0.0.0.0", port=port, debug=True)
-
-
-
+if __name__ == "__main__":
+    app.run(debug=True, port=8080)
